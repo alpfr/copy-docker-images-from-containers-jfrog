@@ -1,0 +1,8 @@
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Temporary/Local files
+*.txt
+*.log
+*.tmp
