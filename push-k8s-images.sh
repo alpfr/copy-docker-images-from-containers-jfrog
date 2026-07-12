@@ -72,6 +72,8 @@ fi
 ################################################################################
 # Prerequisite Verification
 ################################################################################
+CONTAINER_CLI=""
+
 check_prereqs() {
     local missing=0
     
@@ -80,8 +82,13 @@ check_prereqs() {
         missing=1
     fi
     
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "ERROR: 'docker' command line tool is not installed or not in PATH." >&2
+    # Detect docker or podman (highly common in Rocky Linux/RHEL)
+    if command -v docker >/dev/null 2>&1; then
+        CONTAINER_CLI="docker"
+    elif command -v podman >/dev/null 2>&1; then
+        CONTAINER_CLI="podman"
+    else
+        echo "ERROR: Neither 'docker' nor 'podman' command line tool was found in PATH." >&2
         missing=1
     fi
     
@@ -92,23 +99,42 @@ check_prereqs() {
 
 verify_docker_login() {
     local registry="$1"
-    local config_file="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
     local logged_in=false
     
-    if [[ -f "$config_file" ]]; then
-        # Check if the registry URL (with or without https:// protocol prefix) is in auths
-        if grep -q "\"${registry}\"" "$config_file" || grep -q "\"https://${registry}\"" "$config_file"; then
-            logged_in=true
-        fi
+    # Build list of possible authentication config paths for Docker and Podman
+    local auth_files=()
+    
+    if [[ -n "${REGISTRY_AUTH_FILE:-}" ]]; then
+        auth_files+=("$REGISTRY_AUTH_FILE")
     fi
+    
+    if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+        auth_files+=("${XDG_RUNTIME_DIR}/containers/auth.json")
+    fi
+    
+    auth_files+=(
+        "$HOME/.config/containers/auth.json"
+        "${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+        "/run/user/$(id -u)/containers/auth.json"
+    )
+    
+    # Check if the registry exists in any of the config files
+    for config_file in "${auth_files[@]}"; do
+        if [[ -f "$config_file" ]]; then
+            if grep -q "\"${registry}\"" "$config_file" || grep -q "\"https://${registry}\"" "$config_file"; then
+                logged_in=true
+                break
+            fi
+        fi
+    done
     
     if ! $logged_in; then
         if $DRY_RUN; then
-            echo "WARNING: Docker is not logged into Artifactory registry '${registry}'." >&2
+            echo "WARNING: Not logged into Artifactory registry '${registry}' in any detected config files." >&2
             echo "         (Proceeding anyway because --dry-run is active)" >&2
         else
-            echo "ERROR: Docker is not logged into Artifactory registry '${registry}'." >&2
-            echo "       Please run: docker login ${registry}" >&2
+            echo "ERROR: Not logged into Artifactory registry '${registry}'." >&2
+            echo "       Please login using: ${CONTAINER_CLI} login ${registry}" >&2
             exit 1
         fi
     fi
@@ -158,7 +184,8 @@ get_target_image() {
         first_part=$(echo "$normalized_ref" | cut -d'/' -f1)
         
         # A first segment is a registry if it has a '.' or ':' or equals 'localhost'
-        if [[ "$first_part" =~ \. || "$first_part" =~ : || "$first_part" == "localhost" ]]; then
+        # Wildcard patterns are used here to avoid regex engine compatibility variations
+        if [[ "$first_part" == *.* || "$first_part" == *:* || "$first_part" == "localhost" ]]; then
             registry="$first_part"
             repo_path=$(echo "$normalized_ref" | cut -d'/' -f2-)
         else
@@ -184,7 +211,7 @@ check_prereqs
 verify_docker_login "$ARTIFACTORY_REGISTRY"
 validate_namespace "$NAMESPACE"
 
-echo "Collecting images from namespace '${NAMESPACE}'..."
+echo "Collecting images from namespace '${NAMESPACE}' using ${CONTAINER_CLI}..."
 
 # Use a temporary file and ensure cleanup
 TMP_IMAGES=$(mktemp)
@@ -223,26 +250,26 @@ while read -r IMAGE; do
     echo "Target : ${TARGET_IMAGE}"
     
     if $DRY_RUN; then
-        echo "[DRY-RUN] docker pull ${IMAGE}"
-        echo "[DRY-RUN] docker tag ${IMAGE} ${TARGET_IMAGE}"
-        echo "[DRY-RUN] docker push ${TARGET_IMAGE}"
+        echo "[DRY-RUN] ${CONTAINER_CLI} pull ${IMAGE}"
+        echo "[DRY-RUN] ${CONTAINER_CLI} tag ${IMAGE} ${TARGET_IMAGE}"
+        echo "[DRY-RUN] ${CONTAINER_CLI} push ${TARGET_IMAGE}"
         SUCCESS=$((SUCCESS+1))
         continue
     fi
     
-    if ! docker pull "$IMAGE"; then
+    if ! "$CONTAINER_CLI" pull "$IMAGE"; then
         echo "ERROR: Failed to pull $IMAGE"
         FAILED=$((FAILED+1))
         continue
     fi
     
-    if ! docker tag "$IMAGE" "$TARGET_IMAGE"; then
+    if ! "$CONTAINER_CLI" tag "$IMAGE" "$TARGET_IMAGE"; then
         echo "ERROR: Failed to tag $IMAGE as $TARGET_IMAGE"
         FAILED=$((FAILED+1))
         continue
     fi
     
-    if docker push "$TARGET_IMAGE"; then
+    if "$CONTAINER_CLI" push "$TARGET_IMAGE"; then
         echo "SUCCESS: Pushed $TARGET_IMAGE"
         SUCCESS=$((SUCCESS+1))
     else

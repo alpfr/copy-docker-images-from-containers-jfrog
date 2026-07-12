@@ -1,13 +1,16 @@
 # Copy Docker Images from Kubernetes to JFrog Artifactory
 
-This project provides a robust bash script (`push-k8s-images.sh`) to extract all Docker images used in a given Kubernetes namespace, normalize and tag them, and push them to a private JFrog Artifactory registry.
+This project provides a robust bash script (`push-k8s-images.sh`) to extract all Docker/Podman images used in a given Kubernetes namespace, normalize and tag them, and push them to a private JFrog Artifactory registry.
+
+This script is highly optimized to run portably on **macOS** and **Linux** platforms, including RHEL-based distributions like **Rocky Linux**.
 
 ## Features
 
-- **Prerequisite Validation**: Verifies that both `kubectl` and `docker` are installed and in your environment `PATH`.
-- **Active Login Verification**: Checks Docker configuration (`~/.docker/config.json`) to confirm that Docker is logged into your Artifactory registry before pulling or pushing images.
+- **Multi-Runtime Container Support**: Automatically detects and leverages `docker` or `podman` (default in Rocky Linux) container engines.
+- **Prerequisite Validation**: Verifies that `kubectl` and either `docker` or `podman` are installed and in your environment `PATH`.
+- **Multi-Path Login Verification**: Checks Docker and Podman configuration directories (e.g. `~/.docker/config.json`, `~/.config/containers/auth.json`, and dynamic user runtime auth structures `${XDG_RUNTIME_DIR}`) to confirm registry authentication before starting.
 - **Namespace Checks**: Confirms that the target namespace exists in Kubernetes.
-- **Dry-Run Mode**: Allows testing with the `--dry-run` flag to display the planned `docker pull`, `docker tag`, and `docker push` commands without executing them.
+- **Dry-Run Mode**: Allows testing with the `--dry-run` flag to display the planned pull, tag, and push commands without executing them.
 - **Preserves Directory Hierarchy**: Keeps the original image paths (such as namespaces, users, or registries) intact under the target registry path (using slashes `/`), avoiding naming collisions.
 - **Port Normalization**: Replaces registry port colons (e.g. `localhost:5000` &rarr; `localhost_5000`) with underscores to ensure target tags conform to valid Docker reference formats.
 - **Digest Translation**: Automatically maps image references utilizing digests (e.g., `image@sha256:...`) to valid tagged references (e.g., `image:sha256-...`) as Docker tags cannot contain `@` characters.
@@ -17,7 +20,7 @@ This project provides a robust bash script (`push-k8s-images.sh`) to extract all
 
 - `bash` (compatible with standard v3.2+ on macOS/Linux)
 - `kubectl` configured with access to your Kubernetes cluster
-- `docker` daemon running locally and authenticated with your Artifactory registry
+- `docker` or `podman` daemon running locally and authenticated with your Artifactory registry
 
 ## Configuration
 
