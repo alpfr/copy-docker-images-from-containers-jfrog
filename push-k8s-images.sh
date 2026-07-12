@@ -213,8 +213,8 @@ validate_namespace "$NAMESPACE"
 
 echo "Collecting images from namespace '${NAMESPACE}' using ${CONTAINER_CLI}..."
 
-# Use a temporary file and ensure cleanup
-TMP_IMAGES=$(mktemp)
+# Use a temporary file and ensure cleanup (portable across macOS and Linux)
+TMP_IMAGES=$(mktemp -t k8s-images.XXXXXXXX)
 trap 'rm -f "$TMP_IMAGES"' EXIT
 
 # Extract all images (init, standard, and ephemeral containers)
