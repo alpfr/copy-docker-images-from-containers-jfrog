@@ -8,7 +8,7 @@ These scripts are highly optimized to run portably on **macOS** and **Linux** pl
 
 ## 1. Extract & Copy All Images in a Namespace (`push-k8s-images.sh`)
 
-This script extracts **all** unique images across all pods (standard, init, and ephemeral containers) in a given namespace, and pushes them to Artifactory.
+This script extracts **all** unique images across all pods (standard, init, and ephemeral containers) in a given namespace, and pushes them to Artifactory sequentially.
 
 ### Usage
 
@@ -48,25 +48,48 @@ This script targets and copies **only** the image of a specific container name w
 
 ---
 
-## Features
+## 3. Advanced Parallel Image Copying (`push-k8s-images-advanced.sh`) [RECOMMENDED]
 
-- **Multi-Runtime Container Support**: Automatically detects and leverages `docker` or `podman` (default in Rocky Linux) container engines.
-- **Prerequisite Validation**: Verifies that `kubectl` and either `docker` or `podman` are installed and in your environment `PATH`.
-- **Multi-Path Login Verification**: Checks Docker and Podman configuration directories (e.g. `~/.docker/config.json`, `~/.config/containers/auth.json`, and dynamic user runtime auth structures `${XDG_RUNTIME_DIR}`) to confirm registry authentication before starting.
-- **Namespace Checks**: Confirms that the target namespace exists in Kubernetes.
-- **Preserves Directory Hierarchy**: Keeps the original image paths (such as namespaces, users, or registries) intact under the target registry path (using slashes `/`), avoiding naming collisions.
-- **Port Normalization**: Replaces registry port colons (e.g. `localhost:5000` &rarr; `localhost_5000`) with underscores to ensure target tags conform to valid Docker reference formats.
-- **Digest Translation**: Automatically maps image references utilizing digests (e.g., `image@sha256:...`) to valid tagged references (e.g., `image:sha256-...`) as Docker tags cannot contain `@` characters.
-- **Summary Report**: Outputs execution statistics at the end of the run (images found, successes, failures).
+This script is built for production environments and namespaces containing many pods/images. It adds concurrency, retries, sidecar filtering, and environment loading features.
+
+### Advanced Features
+* **Parallel Processing**: Runs image pulls and pushes concurrently using a background job pool. Set the maximum concurrent jobs with `-j` or `--jobs` (default is `3`).
+* **Auto-Retries**: Automatically retries failing pull or push commands using exponential backoff. Set the max attempts with `-r` or `--retries` (default is `3`).
+* **Container Exclusions**: Ignores common system sidecars (like `istio-proxy`, `vault-agent`, `linkerd-proxy`, `datadog-agent`) by default, and accepts custom filters via `-e` or `--exclude`.
+* **Safe Log Synchronization**: Suppresses interleaved outputs from parallel background jobs by capturing logs individually and printing them sequentially when each job finishes.
+* **`.env` Configuration File**: Automatically loads environment variables from a `.env` file in the current directory if it exists.
+
+### Usage
+
+```bash
+./push-k8s-images-advanced.sh <namespace> [options]
+```
+
+* **Dry Run**:
+  ```bash
+  ./push-k8s-images-advanced.sh production --dry-run
+  ```
+* **Run with custom jobs (5) and retries (4) while excluding specific containers**:
+  ```bash
+  ./push-k8s-images-advanced.sh production -j 5 -r 4 --exclude "nginx,istio-proxy"
+  ```
+
+---
 
 ## Configuration
 
-You can customize the target Artifactory registry and docker repository by setting the following environment variables:
+You can customize the target Artifactory registry and docker repository by setting the following environment variables (which can also be defined inside a local `.env` file):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ARTIFACTORY_REGISTRY` | The domain name of the target Artifactory instance | `artifactory.example.com` |
 | `ARTIFACTORY_REPO` | The target Docker registry repository name in Artifactory | `docker-local` |
+
+Example `.env` file:
+```env
+ARTIFACTORY_REGISTRY=jfrog.company.com
+ARTIFACTORY_REPO=docker-production
+```
 
 ## How Tag Mapping Works
 
