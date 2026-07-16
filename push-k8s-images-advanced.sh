@@ -304,11 +304,13 @@ process_single_image() {
     local target_img="$2"
     local log_f="$3"
     local status_f="$4"
+    local containers="$5"
     
     {
         echo "========================================================"
-        echo "Source : ${img}"
-        echo "Target : ${target_img}"
+        echo "Source     : ${img}"
+        echo "Containers : ${containers}"
+        echo "Target     : ${target_img}"
         
         if $DRY_RUN; then
             echo "[DRY-RUN] ${CONTAINER_CLI} pull ${img}"
@@ -361,7 +363,7 @@ fi
 TMP_DIR=$(mktemp -d -t k8s-images-advanced.XXXXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Extract all images, filter exclusions, and deduplicate
+## Extract all images, filter exclusions, and keep container name mappings
 kubectl get pods -n "$NAMESPACE" \
     -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
     | awk -v excludes_str="$EXCLUDES" '
@@ -373,10 +375,13 @@ kubectl get pods -n "$NAMESPACE" \
         }
         {
             if (!excludes[$1]) {
-                print $2;
+                print $0;
             }
         }' \
-    | sort -u > "${TMP_DIR}/images.txt"
+    | sort -u > "${TMP_DIR}/mapping.txt"
+
+# Extract unique image list
+awk '{print $2}' "${TMP_DIR}/mapping.txt" | sort -u > "${TMP_DIR}/images.txt"
 
 IMAGE_COUNT=$(grep -cv '^$' "${TMP_DIR}/images.txt" || true)
 
@@ -421,6 +426,7 @@ while read -r IMAGE; do
     [[ -z "$IMAGE" ]] && continue
     
     TARGET_IMAGE=$(get_target_image "$IMAGE")
+    CONTAINERS=$(awk -v target="$IMAGE" '$2 == target { if (names == "") names = $1; else names = names ", " $1 } END { print names }' "${TMP_DIR}/mapping.txt")
     
     log_file="${TMP_DIR}/job_${index}.log"
     status_file="${TMP_DIR}/job_${index}.status"
@@ -433,7 +439,7 @@ while read -r IMAGE; do
     wait_for_job_space
     
     # Spawn background job
-    process_single_image "$IMAGE" "$TARGET_IMAGE" "$log_file" "$status_file" &
+    process_single_image "$IMAGE" "$TARGET_IMAGE" "$log_file" "$status_file" "$CONTAINERS" &
     pid=$!
     
     pids+=("$pid")

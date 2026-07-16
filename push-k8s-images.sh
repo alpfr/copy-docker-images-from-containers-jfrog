@@ -213,14 +213,18 @@ validate_namespace "$NAMESPACE"
 
 echo "Collecting images from namespace '${NAMESPACE}' using ${CONTAINER_CLI}..."
 
-# Use a temporary file and ensure cleanup (portable across macOS and Linux)
+# Use temporary files and ensure cleanup (portable across macOS and Linux)
 TMP_IMAGES=$(mktemp -t k8s-images.XXXXXXXX)
-trap 'rm -f "$TMP_IMAGES"' EXIT
+TMP_MAPPING=$(mktemp -t k8s-mapping.XXXXXXXX)
+trap 'rm -f "$TMP_IMAGES" "$TMP_MAPPING"' EXIT
 
-# Extract all images (init, standard, and ephemeral containers)
+# Extract container name and image mappings (including init, standard, and ephemeral containers)
 kubectl get pods -n "$NAMESPACE" \
-    -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.image}{'\n'}{end}{range .spec.containers[*]}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.image}{'\n'}{end}{end}" \
-    | sort -u > "$TMP_IMAGES"
+    -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+    | sort -u > "$TMP_MAPPING"
+
+# Extract the list of unique images
+awk '{print $2}' "$TMP_MAPPING" | sort -u > "$TMP_IMAGES"
 
 IMAGE_COUNT=$(grep -cv '^$' "$TMP_IMAGES" || true)
 
@@ -244,10 +248,12 @@ while read -r IMAGE; do
     [[ -z "$IMAGE" ]] && continue
     
     TARGET_IMAGE=$(get_target_image "$IMAGE")
+    CONTAINERS=$(awk -v target="$IMAGE" '$2 == target { if (names == "") names = $1; else names = names ", " $1 } END { print names }' "$TMP_MAPPING")
     
     echo "========================================================"
-    echo "Source : ${IMAGE}"
-    echo "Target : ${TARGET_IMAGE}"
+    echo "Source     : ${IMAGE}"
+    echo "Containers : ${CONTAINERS}"
+    echo "Target     : ${TARGET_IMAGE}"
     
     if $DRY_RUN; then
         echo "[DRY-RUN] ${CONTAINER_CLI} pull ${IMAGE}"
