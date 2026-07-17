@@ -255,18 +255,19 @@ while read -r IMAGE; do
     echo "Target : ${TARGET_IMAGE}"
     
     if $DRY_RUN; then
-        echo "[DRY-RUN] ${CONTAINER_CLI} pull ${IMAGE}"
+        # echo "[DRY-RUN] ${CONTAINER_CLI} pull ${IMAGE}"
         echo "[DRY-RUN] ${CONTAINER_CLI} tag ${IMAGE} ${TARGET_IMAGE}"
         echo "[DRY-RUN] ${CONTAINER_CLI} push ${TARGET_IMAGE}"
         SUCCESS=$((SUCCESS+1))
         continue
     fi
     
-    if ! "$CONTAINER_CLI" pull "$IMAGE"; then
-        echo "ERROR: Failed to pull $IMAGE"
-        FAILED=$((FAILED+1))
-        continue
-    fi
+    # Image pull is commented out because it is assumed to be present locally
+    # if ! "$CONTAINER_CLI" pull "$IMAGE"; then
+    #     echo "ERROR: Failed to pull $IMAGE"
+    #     FAILED=$((FAILED+1))
+    #     continue
+    # fi
     
     if ! "$CONTAINER_CLI" tag "$IMAGE" "$TARGET_IMAGE"; then
         echo "ERROR: Failed to tag $IMAGE as $TARGET_IMAGE"
