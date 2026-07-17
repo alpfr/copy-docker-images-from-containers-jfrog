@@ -83,7 +83,7 @@ You can customize the target Artifactory registry and docker repository by setti
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ARTIFACTORY_REGISTRY` | The domain name of the target Artifactory instance | `artifactory.example.com` |
-| `ARTIFACTORY_REPO` | The target Docker registry repository name in Artifactory | `docker-local` |
+| `ARTIFACTORY_REPO` | The target Docker registry repository name in Artifactory | `docker-snapshot` |
 
 Example `.env` file:
 ```env
@@ -97,9 +97,9 @@ Source images are mapped to target paths in the registry to prevent any collisio
 
 | Source Reference | Target Reference |
 |------------------|------------------|
-| `nginx:1.29` | `artifactory.example.com/docker-local/docker.io/library/nginx:1.29` |
-| `company/app:v2.5.1` | `artifactory.example.com/docker-local/docker.io/company/app:v2.5.1` |
-| `ghcr.io/company/app:v2.5.1` | `artifactory.example.com/docker-local/ghcr.io/company/app:v2.5.1` |
-| `localhost:5000/app:1.0` | `artifactory.example.com/docker-local/localhost_5000/app:1.0` |
-| `ubuntu@sha256:45b23d811c` | `artifactory.example.com/docker-local/docker.io/library/ubuntu:sha256-45b23d811c` |
-| `company/app:v2.5.1@sha256:45b23d811c` | `artifactory.example.com/docker-local/docker.io/company/app:v2.5.1-sha256-45b23d811c` |
+| `nginx:1.29` | `artifactory.example.com/docker-snapshot/docker.io/library/nginx:1.29` |
+| `company/app:v2.5.1` | `artifactory.example.com/docker-snapshot/docker.io/company/app:v2.5.1` |
+| `ghcr.io/company/app:v2.5.1` | `artifactory.example.com/docker-snapshot/ghcr.io/company/app:v2.5.1` |
+| `localhost:5000/app:1.0` | `artifactory.example.com/docker-snapshot/localhost_5000/app:1.0` |
+| `ubuntu@sha256:45b23d811c` | `artifactory.example.com/docker-snapshot/docker.io/library/ubuntu:sha256-45b23d811c` |
+| `company/app:v2.5.1@sha256:45b23d811c` | `artifactory.example.com/docker-snapshot/docker.io/company/app:v2.5.1-sha256-45b23d811c` |

@@ -6,7 +6,7 @@ set -euo pipefail
 # Configuration
 ################################################################################
 ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-artifactory.example.com}"
-ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-docker-local}"
+ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-docker-snapshot}"
 
 ################################################################################
 # Usage
@@ -26,7 +26,7 @@ Options:
 
 Environment Variables:
     ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: artifactory.example.com)
-    ARTIFACTORY_REPO       Target Artifactory docker repository (default: docker-local)
+    ARTIFACTORY_REPO       Target Artifactory docker repository (default: docker-snapshot)
 
 Examples:
     $0 production web

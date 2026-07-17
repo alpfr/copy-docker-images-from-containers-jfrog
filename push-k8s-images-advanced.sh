@@ -6,7 +6,7 @@ set -euo pipefail
 # Configuration Defaults
 ################################################################################
 ARTIFACTORY_REGISTRY="artifactory.example.com"
-ARTIFACTORY_REPO="docker-local"
+ARTIFACTORY_REPO="docker-snapshot"
 
 ################################################################################
 # Load .env File if present (safely parses key=value pairs)
@@ -32,7 +32,7 @@ fi
 
 # Fallback environment overrides
 ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-artifactory.example.com}"
-ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-docker-local}"
+ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-docker-snapshot}"
 
 ################################################################################
 # Usage
@@ -55,7 +55,7 @@ Options:
 
 Environment Variables (can also be specified in a local .env file):
     ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: artifactory.example.com)
-    ARTIFACTORY_REPO       Target Artifactory docker repository (default: docker-local)
+    ARTIFACTORY_REPO       Target Artifactory docker repository (default: docker-snapshot)
 
 Examples:
     $0 production
