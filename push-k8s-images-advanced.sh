@@ -52,8 +52,8 @@ Options:
                         (default: istio-proxy,linkerd-proxy,vault-agent,datadog-agent)
     -f, --filter PATTERN  Filter images by matching pattern (default: dr_11_1_8)
                           Pass empty string "" to disable filtering
-    --dry-run           Show what would be done without pulling/tagging/pushing
-    -h, --help          Show this help message and exit
+    -d, --dry-run         Show what would be done without pulling/tagging/pushing
+    -h, --help            Show this help message and exit
 
 Environment Variables (can also be specified in a local .env file):
     ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: docker-snapshot.abc.def.com)
@@ -63,7 +63,7 @@ Examples:
     $0 production
     $0 production -j 5 -r 5
     $0 production -f "dr_11_1_9"
-    $0 production --exclude "nginx,vault-agent" --dry-run
+    $0 production --exclude "nginx,vault-agent" -d
 EOF
     exit 1
 }
@@ -112,7 +112,7 @@ while [[ $# -gt 0 ]]; do
             FILTER_PATTERN="$2"
             shift
             ;;
-        --dry-run)
+        -d|--dry-run)
             DRY_RUN=true
             ;;
         -h|--help)

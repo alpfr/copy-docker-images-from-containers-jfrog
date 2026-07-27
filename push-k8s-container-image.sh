@@ -23,7 +23,7 @@ Arguments:
 Options:
     -f, --filter PATTERN  Filter image by matching pattern (default: dr_11_1_8)
                           Pass empty string "" to disable filtering
-    --dry-run             Show what would be done without pulling/tagging/pushing
+    -d, --dry-run         Show what would be done without pulling/tagging/pushing
     -h, --help            Show this help message and exit
 
 Environment Variables:
@@ -33,7 +33,7 @@ Environment Variables:
 Examples:
     $0 production web
     $0 production web -f "dr_11_1_9"
-    $0 production web --dry-run
+    $0 production web -d
 EOF
     exit 1
 }
@@ -48,7 +48,7 @@ FILTER_PATTERN="dr_11_1_8"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry-run)
+        -d|--dry-run)
             DRY_RUN=true
             ;;
         -f|--filter)
