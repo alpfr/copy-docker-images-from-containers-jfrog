@@ -14,15 +14,17 @@ ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-abc/alpfr/analytics/datarobot/dr_11_1_8}"
 usage() {
     cat <<EOF
 Usage:
-    $0 <namespace> <container_name> [--dry-run]
+    $0 <namespace> <container_name> [options]
 
 Arguments:
     namespace       Kubernetes namespace to scan
     container_name  Name of the specific container to copy the image of
 
 Options:
-    --dry-run       Show what would be done without pulling/tagging/pushing
-    -h, --help      Show this help message and exit
+    -f, --filter PATTERN  Filter image by matching pattern (default: dr_11_1_8)
+                          Pass empty string "" to disable filtering
+    --dry-run             Show what would be done without pulling/tagging/pushing
+    -h, --help            Show this help message and exit
 
 Environment Variables:
     ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: docker-snapshot.abc.def.com)
@@ -30,6 +32,7 @@ Environment Variables:
 
 Examples:
     $0 production web
+    $0 production web -f "dr_11_1_9"
     $0 production web --dry-run
 EOF
     exit 1
@@ -41,11 +44,20 @@ EOF
 NAMESPACE=""
 CONTAINER_NAME=""
 DRY_RUN=false
+FILTER_PATTERN="dr_11_1_8"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)
             DRY_RUN=true
+            ;;
+        -f|--filter)
+            if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
+                echo "ERROR: --filter requires a pattern argument." >&2
+                usage
+            fi
+            FILTER_PATTERN="$2"
+            shift
             ;;
         -h|--help)
             usage
@@ -197,17 +209,30 @@ echo "Scanning namespace '${NAMESPACE}' for containers named '${CONTAINER_NAME}'
 TMP_IMAGES=$(mktemp -t k8s-images.XXXXXXXX)
 trap 'rm -f "$TMP_IMAGES"' EXIT
 
-# Extract image(s) for the specified container name (only images containing '/dr_11_1_8/')
-kubectl get pods -n "$NAMESPACE" \
-    -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
-    | grep '/dr_11_1_8/' \
-    | awk -v target="$CONTAINER_NAME" '$1 == target {print $2}' \
-    | sort -u > "$TMP_IMAGES" || true
+# Extract image(s) for the specified container name
+if [[ -n "${FILTER_PATTERN:-}" ]]; then
+    echo "Filtering image by matching pattern: '${FILTER_PATTERN}'"
+    kubectl get pods -n "$NAMESPACE" \
+        -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+        | grep "${FILTER_PATTERN}" \
+        | awk -v target="$CONTAINER_NAME" '$1 == target {print $2}' \
+        | sort -u > "$TMP_IMAGES" || true
+else
+    echo "Collecting container image without pattern filtering"
+    kubectl get pods -n "$NAMESPACE" \
+        -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+        | awk -v target="$CONTAINER_NAME" '$1 == target {print $2}' \
+        | sort -u > "$TMP_IMAGES"
+fi
 
 IMAGE_COUNT=$(grep -cv '^$' "$TMP_IMAGES" || true)
 
 if [[ ${IMAGE_COUNT} -eq 0 ]]; then
-    echo "ERROR: No container named '${CONTAINER_NAME}' found in namespace '${NAMESPACE}' matching '/dr_11_1_8/'." >&2
+    if [[ -n "${FILTER_PATTERN:-}" ]]; then
+        echo "ERROR: No container named '${CONTAINER_NAME}' found in namespace '${NAMESPACE}' matching filter pattern '${FILTER_PATTERN}'." >&2
+    else
+        echo "ERROR: No container named '${CONTAINER_NAME}' found in namespace '${NAMESPACE}'." >&2
+    fi
     exit 1
 fi
 
@@ -232,7 +257,13 @@ while read -r IMAGE; do
     echo "Target : ${TARGET_IMAGE}"
     
     if $DRY_RUN; then
-        if [[ "$IMAGE" == */dr_11_1_8/* ]]; then
+        local should_pull=true
+        if [[ -n "${FILTER_PATTERN:-}" ]]; then
+            if [[ "$IMAGE" != *"${FILTER_PATTERN}"* ]]; then
+                should_pull=false
+            fi
+        fi
+        if $should_pull; then
             echo "[DRY-RUN] ${CONTAINER_CLI} pull ${IMAGE}"
         fi
         echo "[DRY-RUN] ${CONTAINER_CLI} tag ${IMAGE} ${TARGET_IMAGE}"
@@ -241,15 +272,22 @@ while read -r IMAGE; do
         continue
     fi
     
-    # Pull the image only if it contains '/dr_11_1_8/'
-    if [[ "$IMAGE" == */dr_11_1_8/* ]]; then
+    # Pull the image if it matches the filter pattern (or if no filter pattern is set)
+    local should_pull=true
+    if [[ -n "${FILTER_PATTERN:-}" ]]; then
+        if [[ "$IMAGE" != *"${FILTER_PATTERN}"* ]]; then
+            should_pull=false
+        fi
+    fi
+    
+    if $should_pull; then
         if ! "$CONTAINER_CLI" pull "$IMAGE"; then
             echo "ERROR: Failed to pull $IMAGE"
             FAILED=$((FAILED+1))
             continue
         fi
     else
-        echo "Info: Skipping pull for image '${IMAGE}' (does not contain '/dr_11_1_8/')"
+        echo "Info: Skipping pull for image '${IMAGE}' (does not match filter pattern '${FILTER_PATTERN}')"
     fi
     
     if ! "$CONTAINER_CLI" tag "$IMAGE" "$TARGET_IMAGE"; then

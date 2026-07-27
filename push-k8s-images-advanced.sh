@@ -50,6 +50,8 @@ Options:
     -r, --retries NUM   Number of retries for failed pull/push operations (default: 3)
     -e, --exclude LIST  Comma-separated list of container names to exclude
                         (default: istio-proxy,linkerd-proxy,vault-agent,datadog-agent)
+    -f, --filter PATTERN  Filter images by matching pattern (default: dr_11_1_8)
+                          Pass empty string "" to disable filtering
     --dry-run           Show what would be done without pulling/tagging/pushing
     -h, --help          Show this help message and exit
 
@@ -60,6 +62,7 @@ Environment Variables (can also be specified in a local .env file):
 Examples:
     $0 production
     $0 production -j 5 -r 5
+    $0 production -f "dr_11_1_9"
     $0 production --exclude "nginx,vault-agent" --dry-run
 EOF
     exit 1
@@ -73,6 +76,7 @@ JOBS=3
 RETRIES=3
 EXCLUDES="istio-proxy,linkerd-proxy,vault-agent,datadog-agent"
 DRY_RUN=false
+FILTER_PATTERN="dr_11_1_8"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -98,6 +102,14 @@ while [[ $# -gt 0 ]]; do
                 usage
             fi
             EXCLUDES="$2"
+            shift
+            ;;
+        -f|--filter)
+            if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
+                echo "ERROR: --filter requires a pattern argument." >&2
+                usage
+            fi
+            FILTER_PATTERN="$2"
             shift
             ;;
         --dry-run)
@@ -291,18 +303,37 @@ process_single_image() {
         echo "Target     : ${target_img}"
         
         if $DRY_RUN; then
-            echo "[DRY-RUN] ${CONTAINER_CLI} pull ${img}"
+            local should_pull=true
+            if [[ -n "${FILTER_PATTERN:-}" ]]; then
+                if [[ "$img" != *"${FILTER_PATTERN}"* ]]; then
+                    should_pull=false
+                fi
+            fi
+            if $should_pull; then
+                echo "[DRY-RUN] ${CONTAINER_CLI} pull ${img}"
+            fi
             echo "[DRY-RUN] ${CONTAINER_CLI} tag ${img} ${target_img}"
             echo "[DRY-RUN] ${CONTAINER_CLI} push ${target_img}"
             echo 0 > "$status_f"
             exit 0
         fi
         
-        # 1. Pull with Retry
-        if ! run_with_retry "$RETRIES" "$CONTAINER_CLI" pull "$img"; then
-            echo "ERROR: Failed to pull ${img}" >&2
-            echo 1 > "$status_f"
-            exit 1
+        # 1. Pull with Retry if matching the filter pattern (or if no filter is set)
+        local should_pull=true
+        if [[ -n "${FILTER_PATTERN:-}" ]]; then
+            if [[ "$img" != *"${FILTER_PATTERN}"* ]]; then
+                should_pull=false
+            fi
+        fi
+        
+        if $should_pull; then
+            if ! run_with_retry "$RETRIES" "$CONTAINER_CLI" pull "$img"; then
+                echo "ERROR: Failed to pull ${img}" >&2
+                echo 1 > "$status_f"
+                exit 1
+            fi
+        else
+            echo "Info: Skipping pull for image '${img}' (does not match filter pattern '${FILTER_PATTERN}')"
         fi
         
         # 2. Tag
@@ -341,23 +372,43 @@ fi
 TMP_DIR=$(mktemp -d -t k8s-images-advanced.XXXXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-## Extract all images, filter exclusions, keep container name mappings (only images containing '/dr_11_1_8/')
-kubectl get pods -n "$NAMESPACE" \
-    -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
-    | grep '/dr_11_1_8/' \
-    | awk -v excludes_str="$EXCLUDES" '
-        BEGIN {
-            split(excludes_str, arr, ",");
-            for (key in arr) {
-                excludes[arr[key]] = 1;
+## Extract all images, filter exclusions, keep container name mappings
+if [[ -n "${FILTER_PATTERN:-}" ]]; then
+    echo "Filtering images by matching pattern: '${FILTER_PATTERN}'"
+    kubectl get pods -n "$NAMESPACE" \
+        -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+        | grep "${FILTER_PATTERN}" \
+        | awk -v excludes_str="$EXCLUDES" '
+            BEGIN {
+                split(excludes_str, arr, ",");
+                for (key in arr) {
+                    excludes[arr[key]] = 1;
+                }
             }
-        }
-        {
-            if (!excludes[$1]) {
-                print $0;
+            {
+                if (!excludes[$1]) {
+                    print $0;
+                }
+            }' \
+        | sort -u > "${TMP_DIR}/mapping.txt" || true
+else
+    echo "Collecting all images without pattern filtering"
+    kubectl get pods -n "$NAMESPACE" \
+        -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+        | awk -v excludes_str="$EXCLUDES" '
+            BEGIN {
+                split(excludes_str, arr, ",");
+                for (key in arr) {
+                    excludes[arr[key]] = 1;
+                }
             }
-        }' \
-    | sort -u > "${TMP_DIR}/mapping.txt" || true
+            {
+                if (!excludes[$1]) {
+                    print $0;
+                }
+            }' \
+        | sort -u > "${TMP_DIR}/mapping.txt"
+fi
 
 # Extract unique image list
 awk '{print $2}' "${TMP_DIR}/mapping.txt" | sort -u > "${TMP_DIR}/images.txt"
@@ -365,7 +416,11 @@ awk '{print $2}' "${TMP_DIR}/mapping.txt" | sort -u > "${TMP_DIR}/images.txt"
 IMAGE_COUNT=$(grep -cv '^$' "${TMP_DIR}/images.txt" || true)
 
 if [[ ${IMAGE_COUNT} -eq 0 ]]; then
-    echo "No images found in namespace '${NAMESPACE}' matching '/dr_11_1_8/' and current filter rules."
+    if [[ -n "${FILTER_PATTERN:-}" ]]; then
+        echo "No images found in namespace '${NAMESPACE}' matching filter pattern '${FILTER_PATTERN}' and current filter rules."
+    else
+        echo "No images found in namespace '${NAMESPACE}' matching current filter rules."
+    fi
     exit 0
 fi
 
