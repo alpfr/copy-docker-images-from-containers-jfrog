@@ -5,8 +5,8 @@ set -euo pipefail
 ################################################################################
 # Configuration
 ################################################################################
-ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-artifactory.example.com}"
-ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-docker-snapshot}"
+ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-docker-snapshot.abc.def.com}"
+ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-abc/alpfr/analytics/datarobot/dr_11_1_8}"
 
 ################################################################################
 # Usage
@@ -25,8 +25,8 @@ Options:
     -h, --help      Show this help message and exit
 
 Environment Variables:
-    ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: artifactory.example.com)
-    ARTIFACTORY_REPO       Target Artifactory docker repository (default: docker-snapshot)
+    ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: docker-snapshot.abc.def.com)
+    ARTIFACTORY_REPO       Target Artifactory docker repository (default: abc/alpfr/analytics/datarobot/dr_11_1_8)
 
 Examples:
     $0 production web
@@ -160,16 +160,18 @@ validate_namespace() {
     fi
 }
 
-################################################################################
-# Target Tag Parsing (Preserve Path Structure)
+# Target Tag Parsing (Extract Base Image Name)
 ################################################################################
 get_target_image() {
     local source_image="$1"
     
-    # 1. Handle image digests: docker tags cannot contain '@' or ':sha256:'
+    # 1. Extract the base image name (everything after the last slash)
+    local base_image="${source_image##*/}"
+    
+    # 2. Handle image digests: docker tags cannot contain '@' or ':sha256:'
     # E.g. ubuntu@sha256:45b23d81... -> ubuntu:sha256-45b23d81...
     # If the reference already has a tag (like ubuntu:20.04@sha256:...), use -sha256-
-    local normalized_ref="$source_image"
+    local normalized_ref="$base_image"
     if [[ "$normalized_ref" == *@sha256:* ]]; then
         local base_part="${normalized_ref%%@*}"
         if [[ "$base_part" == *:* ]]; then
@@ -178,34 +180,8 @@ get_target_image() {
             normalized_ref=$(echo "$normalized_ref" | sed 's/@sha256:/:sha256-/')
         fi
     fi
-
-    # 2. Extract Registry and Repository Path
-    local registry=""
-    local repo_path=""
     
-    if [[ "$normalized_ref" == */* ]]; then
-        local first_part
-        first_part=$(echo "$normalized_ref" | cut -d'/' -f1)
-        
-        # A first segment is a registry if it has a '.' or ':' or equals 'localhost'
-        # Wildcard patterns are used here to avoid regex engine compatibility variations
-        if [[ "$first_part" == *.* || "$first_part" == *:* || "$first_part" == "localhost" ]]; then
-            registry="$first_part"
-            repo_path=$(echo "$normalized_ref" | cut -d'/' -f2-)
-        else
-            registry="docker.io"
-            repo_path="$normalized_ref"
-        fi
-    else
-        registry="docker.io"
-        repo_path="library/$normalized_ref"
-    fi
-    
-    # 3. Clean registry part to remove port colon if present (colons not allowed in repository path)
-    local clean_registry
-    clean_registry=$(echo "$registry" | tr ':' '_')
-    
-    echo "${ARTIFACTORY_REGISTRY}/${ARTIFACTORY_REPO}/${clean_registry}/${repo_path}"
+    echo "${ARTIFACTORY_REGISTRY}/${ARTIFACTORY_REPO}/${normalized_ref}"
 }
 
 ################################################################################
