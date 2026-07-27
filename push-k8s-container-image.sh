@@ -197,16 +197,17 @@ echo "Scanning namespace '${NAMESPACE}' for containers named '${CONTAINER_NAME}'
 TMP_IMAGES=$(mktemp -t k8s-images.XXXXXXXX)
 trap 'rm -f "$TMP_IMAGES"' EXIT
 
-# Extract image(s) for the specified container name
+# Extract image(s) for the specified container name (only images containing '/dr_11_1_8/')
 kubectl get pods -n "$NAMESPACE" \
     -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+    | grep '/dr_11_1_8/' \
     | awk -v target="$CONTAINER_NAME" '$1 == target {print $2}' \
-    | sort -u > "$TMP_IMAGES"
+    | sort -u > "$TMP_IMAGES" || true
 
 IMAGE_COUNT=$(grep -cv '^$' "$TMP_IMAGES" || true)
 
 if [[ ${IMAGE_COUNT} -eq 0 ]]; then
-    echo "ERROR: No container named '${CONTAINER_NAME}' found in namespace '${NAMESPACE}'." >&2
+    echo "ERROR: No container named '${CONTAINER_NAME}' found in namespace '${NAMESPACE}' matching '/dr_11_1_8/'." >&2
     exit 1
 fi
 

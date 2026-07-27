@@ -341,9 +341,10 @@ fi
 TMP_DIR=$(mktemp -d -t k8s-images-advanced.XXXXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-## Extract all images, filter exclusions, and keep container name mappings
+## Extract all images, filter exclusions, keep container name mappings (only images containing '/dr_11_1_8/')
 kubectl get pods -n "$NAMESPACE" \
     -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
+    | grep '/dr_11_1_8/' \
     | awk -v excludes_str="$EXCLUDES" '
         BEGIN {
             split(excludes_str, arr, ",");
@@ -356,7 +357,7 @@ kubectl get pods -n "$NAMESPACE" \
                 print $0;
             }
         }' \
-    | sort -u > "${TMP_DIR}/mapping.txt"
+    | sort -u > "${TMP_DIR}/mapping.txt" || true
 
 # Extract unique image list
 awk '{print $2}' "${TMP_DIR}/mapping.txt" | sort -u > "${TMP_DIR}/images.txt"
@@ -364,7 +365,7 @@ awk '{print $2}' "${TMP_DIR}/mapping.txt" | sort -u > "${TMP_DIR}/images.txt"
 IMAGE_COUNT=$(grep -cv '^$' "${TMP_DIR}/images.txt" || true)
 
 if [[ ${IMAGE_COUNT} -eq 0 ]]; then
-    echo "No images found in namespace '${NAMESPACE}' matching current filter rules."
+    echo "No images found in namespace '${NAMESPACE}' matching '/dr_11_1_8/' and current filter rules."
     exit 0
 fi
 

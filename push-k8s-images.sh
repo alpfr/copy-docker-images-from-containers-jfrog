@@ -195,10 +195,11 @@ TMP_IMAGES=$(mktemp -t k8s-images.XXXXXXXX)
 TMP_MAPPING=$(mktemp -t k8s-mapping.XXXXXXXX)
 trap 'rm -f "$TMP_IMAGES" "$TMP_MAPPING"' EXIT
 
-# Extract container name and image mappings (including init, standard, and ephemeral containers)
+# Extract container name and image mappings (only images containing '/dr_11_1_8/')
 kubectl get pods -n "$NAMESPACE" \
     -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
-    | sort -u > "$TMP_MAPPING"
+    | sort -u \
+    | grep '/dr_11_1_8/' > "$TMP_MAPPING" || true
 
 # Extract the list of unique images
 awk '{print $2}' "$TMP_MAPPING" | sort -u > "$TMP_IMAGES"
@@ -206,7 +207,7 @@ awk '{print $2}' "$TMP_MAPPING" | sort -u > "$TMP_IMAGES"
 IMAGE_COUNT=$(grep -cv '^$' "$TMP_IMAGES" || true)
 
 if [[ ${IMAGE_COUNT} -eq 0 ]]; then
-    echo "No images found in namespace '${NAMESPACE}'."
+    echo "No images found in namespace '${NAMESPACE}' matching '/dr_11_1_8/'."
     exit 0
 fi
 
