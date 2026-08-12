@@ -344,15 +344,24 @@ process_single_image() {
         fi
         
         # 3. Push with Retry
+        local push_success=true
         if ! run_with_retry "$RETRIES" "$CONTAINER_CLI" push "$target_img"; then
             echo "ERROR: Failed to push ${target_img}" >&2
+            push_success=false
+        fi
+        
+        # Clean up local images to free up space
+        echo "Cleaning up local images: ${img} and ${target_img}"
+        "$CONTAINER_CLI" rmi "$img" "$target_img" >/dev/null 2>&1 || true
+        
+        if $push_success; then
+            echo "SUCCESS: Pushed ${target_img}"
+            echo 0 > "$status_f"
+            exit 0
+        else
             echo 1 > "$status_f"
             exit 1
         fi
-        
-        echo "SUCCESS: Pushed ${target_img}"
-        echo 0 > "$status_f"
-        exit 0
     } > "$log_f" 2>&1
 }
 

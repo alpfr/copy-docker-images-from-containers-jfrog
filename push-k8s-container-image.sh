@@ -303,6 +303,10 @@ while read -r IMAGE; do
         echo "ERROR: Failed to push $TARGET_IMAGE"
         FAILED=$((FAILED+1))
     fi
+
+    # Clean up local images to free up space
+    echo "Cleaning up local images: $IMAGE and $TARGET_IMAGE"
+    "$CONTAINER_CLI" rmi "$IMAGE" "$TARGET_IMAGE" >/dev/null 2>&1 || true
 done < "$TMP_IMAGES"
 
 ################################################################################
