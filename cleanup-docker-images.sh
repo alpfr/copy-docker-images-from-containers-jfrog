@@ -110,6 +110,13 @@ while IFS= read -r IMAGE; do
     fi
 done <<< "$IMAGES"
 
+# Sweep intermediate dangling layers
+if ! $DRY_RUN; then
+    echo
+    echo "Sweeping intermediate dangling layers to reclaim additional space..."
+    "$CONTAINER_CLI" image prune -f >/dev/null 2>&1 || true
+fi
+
 echo
 echo "==================== Summary ===================="
 echo "Pattern      : ${PATTERN}"
