@@ -10,16 +10,19 @@ set -euo pipefail
 DRY_RUN=false
 PATTERN=""
 CUTOFF=""
+EXACT=""
 LOG_DIR="./logs"
 
 usage() {
     cat <<EOF
 Usage:
-    $0 -c <version> [options]
+    $0 [options]
 
-Arguments:
+Arguments (Must specify exactly one of):
     -c, --cutoff VERSION    Cutoff version limit (e.g., dr_11_1_7 or 11.1.7).
-                            Images <= this version will be deleted. (required)
+                            Images <= this version will be deleted.
+    -e, --exact VERSION     Exact version to delete (e.g., dr_11_1_7 or 11.1.7).
+                            Only images == this version will be deleted.
 
 Options:
     -p, --pattern PATTERN   Only process images matching this name pattern (e.g. datarobot, rancher).
@@ -29,6 +32,7 @@ Options:
 
 Examples:
     $0 -c "dr_11_1_7"
+    $0 -e "dr_11_1_7" -p "datarobot"
     $0 -c "11.1.7" -p "datarobot" -d
 EOF
     exit 1
@@ -46,6 +50,14 @@ while [[ "$#" -gt 0 ]]; do
                 usage
             fi
             CUTOFF="$2"
+            shift
+            ;;
+        -e|--exact)
+            if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
+                echo "ERROR: --exact requires a version string." >&2
+                usage
+            fi
+            EXACT="$2"
             shift
             ;;
         -p|--pattern)
@@ -67,8 +79,13 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-if [[ -z "$CUTOFF" ]]; then
-    echo "ERROR: --cutoff (-c) option is required." >&2
+if [[ -z "$CUTOFF" ]] && [[ -z "$EXACT" ]]; then
+    echo "ERROR: Either --cutoff (-c) or --exact (-e) option is required." >&2
+    usage
+fi
+
+if [[ -n "$CUTOFF" ]] && [[ -n "$EXACT" ]]; then
+    echo "ERROR: Cannot specify both --cutoff (-c) and --exact (-e)." >&2
     usage
 fi
 
@@ -137,7 +154,11 @@ version_compare() {
 echo "======================================================="
 echo "   Version-Aware Image Cleanup Script"
 echo "======================================================="
-echo "Target Cutoff Limit : <= ${CUTOFF}"
+if [[ -n "$EXACT" ]]; then
+    echo "Target Exact Match  : == ${EXACT}"
+else
+    echo "Target Cutoff Limit : <= ${CUTOFF}"
+fi
 if [[ -n "$PATTERN" ]]; then
     echo "Image Filter Pattern: ${PATTERN}"
 fi
@@ -158,7 +179,11 @@ fi
 {
     echo "======================================================="
     echo "Timestamp:           $(date)"
-    echo "Cutoff limit:        <= $CUTOFF"
+    if [[ -n "$EXACT" ]]; then
+        echo "Target Version:      == $EXACT"
+    else
+        echo "Cutoff limit:        <= $CUTOFF"
+    fi
     echo "Pattern filter:      ${PATTERN:-[None]}"
     echo "Dry Run:             $DRY_RUN"
     echo "-------------------------------------------------------"
@@ -186,17 +211,35 @@ fi
             continue
         fi
         
-        # 3. Compare image version tag with the cutoff limit
-        version_compare "$TAG" "$CUTOFF"
-        cmp_res=$?
+        # 3. Compare image version tag
+        local should_delete=false
+        if [[ -n "$EXACT" ]]; then
+            version_compare "$TAG" "$EXACT"
+            if [[ $? -eq 0 ]]; then
+                should_delete=true
+            fi
+        else
+            version_compare "$TAG" "$CUTOFF"
+            local cmp_res=$?
+            if [[ $cmp_res -eq 0 ]] || [[ $cmp_res -eq 2 ]]; then
+                should_delete=true
+            fi
+        fi
         
-        # cmp_res == 0 (equal) or cmp_res == 2 (less than cutoff)
-        if [[ $cmp_res -eq 0 ]] || [[ $cmp_res -eq 2 ]]; then
+        # Action based on comparison
+        if $should_delete; then
+            local ver_info=""
+            if [[ -n "$EXACT" ]]; then
+                ver_info="version: $TAG == $EXACT"
+            else
+                ver_info="version: $TAG <= $CUTOFF"
+            fi
+            
             if $DRY_RUN; then
-                echo "[DRY-RUN] Would remove: $IMAGE (version: $TAG <= $CUTOFF)"
+                echo "[DRY-RUN] Would remove: $IMAGE ($ver_info)"
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
-                echo "Removing: $IMAGE (version: $TAG <= $CUTOFF)"
+                echo "Removing: $IMAGE ($ver_info)"
                 if "$CONTAINER_CLI" rmi "$IMAGE" >/dev/null 2>&1; then
                     echo "✔ Removed successfully"
                     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
@@ -206,7 +249,11 @@ fi
                 fi
             fi
         else
-            echo "Keeping : $IMAGE (version: $TAG > $CUTOFF)"
+            if [[ -n "$EXACT" ]]; then
+                echo "Keeping : $IMAGE (version: $TAG != $EXACT)"
+            else
+                echo "Keeping : $IMAGE (version: $TAG > $CUTOFF)"
+            fi
             SKIP_COUNT=$((SKIP_COUNT + 1))
         fi
         echo "-------------------------------------------------------"
@@ -221,7 +268,11 @@ fi
 
     echo ""
     echo "==================== SUMMARY ===================="
-    echo "Cutoff Limit:    <= $CUTOFF"
+    if [[ -n "$EXACT" ]]; then
+        echo "Target Version:  == $EXACT"
+    else
+        echo "Cutoff Limit:    <= $CUTOFF"
+    fi
     echo "Pattern Filter:  ${PATTERN:-[None]}"
     echo "Removed/Purged:  $SUCCESS_COUNT"
     echo "Failed:          $FAIL_COUNT"
