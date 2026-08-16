@@ -7,6 +7,27 @@ set -euo pipefail
 # Scans pods for a specific container, finds its image, and removes it locally
 ################################################################################
 
+# Load .env File if present (safely parses key=value pairs)
+if [[ -f .env ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Ignore comments and empty lines
+        [[ "$line" =~ ^# ]] && continue
+        [[ -z "$line" ]] && continue
+        
+        if [[ "$line" == *=* ]]; then
+            key="${line%%=*}"
+            value="${line#*=}"
+            # Strip outer single/double quotes if present
+            value="${value%\"}"
+            value="${value#\"}"
+            value="${value%\'}"
+            value="${value#\'}"
+            export "$key=$value"
+        fi
+    done < .env
+fi
+
+# Fallback environment overrides
 ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-docker-snapshot.abc.def.com}"
 ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-abc/alpfr/analytics/datarobot/dr_11_1_8}"
 
@@ -122,6 +143,13 @@ validate_namespace() {
     fi
 }
 
+# Image Existence Helper
+################################################################################
+image_exists() {
+    local img="$1"
+    "$CONTAINER_CLI" image inspect "$img" >/dev/null 2>&1
+}
+
 # Target Tag Parsing (Extract Base Image Name)
 ################################################################################
 get_target_image() {
@@ -202,29 +230,53 @@ while read -r IMAGE; do
     echo "Target : ${TARGET_IMAGE}"
     
     if $DRY_RUN; then
-        echo "[DRY-RUN] Would remove local image: ${IMAGE}"
-        echo "[DRY-RUN] Would remove local tag  : ${TARGET_IMAGE}"
+        if image_exists "$IMAGE"; then
+            echo "[DRY-RUN] Would remove local image: ${IMAGE}"
+        else
+            echo "[DRY-RUN] (Local image '${IMAGE}' is not present on this host)"
+        fi
+        if image_exists "$TARGET_IMAGE"; then
+            echo "[DRY-RUN] Would remove local tag  : ${TARGET_IMAGE}"
+        else
+            echo "[DRY-RUN] (Local tag '${TARGET_IMAGE}' is not present on this host)"
+        fi
         SUCCESS=$((SUCCESS+1))
         continue
     fi
     
-    echo "Removing local images: ${IMAGE} and ${TARGET_IMAGE}"
     local image_removed=false
     local tag_removed=false
+    local any_action=false
     
-    if "$CONTAINER_CLI" rmi "$IMAGE" >/dev/null 2>&1; then
-        image_removed=true
+    if image_exists "$IMAGE"; then
+        any_action=true
+        echo "Removing local image: ${IMAGE}"
+        if "$CONTAINER_CLI" rmi "$IMAGE" >/dev/null 2>&1; then
+            echo "✔ Removed source tag successfully"
+            image_removed=true
+        else
+            echo "✖ Failed to remove source tag ${IMAGE}"
+        fi
     fi
     
-    if "$CONTAINER_CLI" rmi "$TARGET_IMAGE" >/dev/null 2>&1; then
-        tag_removed=true
+    if image_exists "$TARGET_IMAGE"; then
+        any_action=true
+        echo "Removing local tag  : ${TARGET_IMAGE}"
+        if "$CONTAINER_CLI" rmi "$TARGET_IMAGE" >/dev/null 2>&1; then
+            echo "✔ Removed target tag successfully"
+            tag_removed=true
+        else
+            echo "✖ Failed to remove target tag ${TARGET_IMAGE}"
+        fi
     fi
     
-    if $image_removed || $tag_removed; then
-        echo "✔ Successfully removed local images"
+    if ! $any_action; then
+        echo "Info: Neither image nor target tag are present on this host."
+        SUCCESS=$((SUCCESS+1))
+    elif $image_removed || $tag_removed; then
         SUCCESS=$((SUCCESS+1))
     else
-        echo "✖ Failed to remove images (may be in use by a container)"
+        echo "ERROR: Failed to remove either tag (they may be in use by a container)"
         FAILED=$((FAILED+1))
     fi
 done < "$TMP_IMAGES"
