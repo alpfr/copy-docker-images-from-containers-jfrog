@@ -7,6 +7,9 @@ set -euo pipefail
 # Scans pods for a specific container, finds its image, and removes it locally
 ################################################################################
 
+ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-docker-snapshot.abc.def.com}"
+ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-abc/alpfr/analytics/datarobot/dr_11_1_8}"
+
 DRY_RUN=false
 FILTER_PATTERN="dr_11_1_8"
 
@@ -24,6 +27,10 @@ Options:
                           Pass empty string "" to disable filtering
     -d, --dry-run         Show what would be done without removing images
     -h, --help            Show this help message and exit
+
+Environment Variables:
+    ARTIFACTORY_REGISTRY   Target Artifactory registry host (default: docker-snapshot.abc.def.com)
+    ARTIFACTORY_REPO       Target Artifactory docker repository (default: abc/alpfr/analytics/datarobot/dr_11_1_8)
 
 Examples:
     $0 production web
@@ -115,6 +122,28 @@ validate_namespace() {
     fi
 }
 
+# Target Tag Parsing (Extract Base Image Name)
+################################################################################
+get_target_image() {
+    local source_image="$1"
+    
+    # 1. Extract the base image name (everything after the last slash)
+    local base_image="${source_image##*/}"
+    
+    # 2. Handle image digests: docker tags cannot contain '@' or ':sha256:'
+    local normalized_ref="$base_image"
+    if [[ "$normalized_ref" == *@sha256:* ]]; then
+        local base_part="${normalized_ref%%@*}"
+        if [[ "$base_part" == *:* ]]; then
+            normalized_ref=$(echo "$normalized_ref" | sed 's/@sha256:/-sha256-/')
+        else
+            normalized_ref=$(echo "$normalized_ref" | sed 's/@sha256:/:sha256-/')
+        fi
+    fi
+    
+    echo "${ARTIFACTORY_REGISTRY}/${ARTIFACTORY_REPO}/${normalized_ref}"
+}
+
 # Main Execution
 check_prereqs
 validate_namespace "$NAMESPACE"
@@ -166,21 +195,36 @@ FAILED=0
 while read -r IMAGE; do
     [[ -z "$IMAGE" ]] && continue
     
+    TARGET_IMAGE=$(get_target_image "$IMAGE")
+    
     echo "========================================================"
     echo "Source : ${IMAGE}"
+    echo "Target : ${TARGET_IMAGE}"
     
     if $DRY_RUN; then
         echo "[DRY-RUN] Would remove local image: ${IMAGE}"
+        echo "[DRY-RUN] Would remove local tag  : ${TARGET_IMAGE}"
         SUCCESS=$((SUCCESS+1))
         continue
     fi
     
-    echo "Removing image: ${IMAGE}"
+    echo "Removing local images: ${IMAGE} and ${TARGET_IMAGE}"
+    local image_removed=false
+    local tag_removed=false
+    
     if "$CONTAINER_CLI" rmi "$IMAGE" >/dev/null 2>&1; then
-        echo "✔ Removed successfully"
+        image_removed=true
+    fi
+    
+    if "$CONTAINER_CLI" rmi "$TARGET_IMAGE" >/dev/null 2>&1; then
+        tag_removed=true
+    fi
+    
+    if $image_removed || $tag_removed; then
+        echo "✔ Successfully removed local images"
         SUCCESS=$((SUCCESS+1))
     else
-        echo "✖ Failed to remove ${IMAGE} (image may be in use by a container)"
+        echo "✖ Failed to remove images (may be in use by a container)"
         FAILED=$((FAILED+1))
     fi
 done < "$TMP_IMAGES"
