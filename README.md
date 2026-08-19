@@ -102,4 +102,28 @@ Source images are mapped directly to the target repository folder using their ba
 | `ghcr.io/company/app:v2.5.1` | `docker-snapshot.abc.def.com/abc/alpfr/analytics/datarobot/dr_11_1_8/app:v2.5.1` |
 | `localhost:5000/app:1.0` | `docker-snapshot.abc.def.com/abc/alpfr/analytics/datarobot/dr_11_1_8/app:1.0` |
 | `ubuntu@sha256:45b23d811c` | `docker-snapshot.abc.def.com/abc/alpfr/analytics/datarobot/dr_11_1_8/ubuntu:sha256-45b23d811c` |
-| `company/app:v2.5.1@sha256:45b23d811c` | `docker-snapshot.abc.def.com/abc/alpfr/analytics/datarobot/dr_11_1_8/app:v2.5.1-sha256-45b23d811c` |
+| company/app:v2.5.1@sha256:45b23d811c | `docker-snapshot.abc.def.com/abc/alpfr/analytics/datarobot/dr_11_1_8/app:v2.5.1-sha256-45b23d811c` |
+
+---
+
+## 4. Local Image Cleanup (`cleanup-k8s-container-image.sh`)
+
+This script scans Kubernetes pods in a namespace for a specific container (or all containers), identifies their local images and their Artifactory target tags, and removes them from the host's container runtime to free up disk space or force a fresh pull.
+
+### Usage
+```bash
+./cleanup-k8s-container-image.sh -n <namespace> [options]
+```
+
+* **Dry Run**: Preview what images would be removed without actually purging them:
+  ```bash
+  ./cleanup-k8s-container-image.sh -n production -c web --dry-run
+  ```
+* **Clean up specific container (e.g. `web`) inside namespace `production` using `podman`**:
+  ```bash
+  ./cleanup-k8s-container-image.sh -n production -c web -v podman
+  ```
+* **Clean up all containers in namespace `production` using Containered/`crictl`**:
+  ```bash
+  ./cleanup-k8s-container-image.sh -n production -c all -v crictl
+  ```
