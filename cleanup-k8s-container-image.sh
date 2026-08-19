@@ -1,11 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# cleanup-k8s-container-image.sh
+# Kubernetes Container Image Cleanup Utility
+# Scans pods for a specific container (or all), finds its image, and removes it locally.
 
 set -euo pipefail
-
-################################################################################
-# Kubernetes Container Image Cleanup Utility
-# Scans pods for a specific container, finds its image, and removes it locally
-################################################################################
 
 # Load .env File if present (safely parses key=value pairs)
 if [[ -f .env ]]; then
@@ -31,21 +29,23 @@ fi
 ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY:-docker-snapshot.abc.def.com}"
 ARTIFACTORY_REPO="${ARTIFACTORY_REPO:-abc/alpfr/analytics/datarobot/dr_11_1_8}"
 
+NAMESPACE=""
+CONTAINER_NAME="all"
+VENDOR=""
 DRY_RUN=false
 FILTER_PATTERN="dr_11_1_8"
 
 usage() {
     cat <<EOF
 Usage:
-    $0 <namespace> <container_name> [options]
-
-Arguments:
-    namespace       Kubernetes namespace to scan
-    container_name  Name of the specific container to target for image cleanup
+    $0 -n <namespace> [options]
 
 Options:
-    -f, --filter PATTERN  Filter image by matching pattern (default: dr_11_1_8)
+    -n, --namespace NS    Kubernetes namespace to scan (Required)
+    -c, --container NAME  Name of the specific container to target (default: "all")
+    -f, --filter PATTERN  Filter image by matching pattern (default: "dr_11_1_8")
                           Pass empty string "" to disable filtering
+    -v, --vendor VENDOR   Container runtime vendor: docker, podman, or crictl (default: auto-detect)
     -d, --dry-run         Show what would be done without removing images
     -h, --help            Show this help message and exit
 
@@ -54,53 +54,48 @@ Environment Variables:
     ARTIFACTORY_REPO       Target Artifactory docker repository (default: abc/alpfr/analytics/datarobot/dr_11_1_8)
 
 Examples:
-    $0 production web
-    $0 production web -f "dr_11_1_9"
-    $0 production web -d
+    $0 -n production -c web
+    $0 -n production -c all -f "dr_11_1_9"
+    $0 -n production -c web -v podman -d
 EOF
     exit 1
 }
 
-# Argument Parsing
-NAMESPACE=""
-CONTAINER_NAME=""
-
+# Parse options
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -d|--dry-run)
-            DRY_RUN=true
+        -n|--namespace)
+            NAMESPACE="$2"
+            shift 2
+            ;;
+        -c|--container)
+            CONTAINER_NAME="$2"
+            shift 2
+            ;;
+        -v|--vendor)
+            VENDOR="$2"
+            shift 2
             ;;
         -f|--filter)
-            if [[ $# -lt 2 ]] || [[ "$2" == -* ]]; then
-                echo "ERROR: --filter requires a pattern argument." >&2
-                usage
-            fi
             FILTER_PATTERN="$2"
+            shift 2
+            ;;
+        -d|--dry-run)
+            DRY_RUN=true
             shift
             ;;
         -h|--help)
             usage
             ;;
-        -*)
+        *)
             echo "ERROR: Unknown option: $1" >&2
             usage
             ;;
-        *)
-            if [[ -z "$NAMESPACE" ]]; then
-                NAMESPACE="$1"
-            elif [[ -z "$CONTAINER_NAME" ]]; then
-                CONTAINER_NAME="$1"
-            else
-                echo "ERROR: Extra argument specified: '$1'" >&2
-                usage
-            fi
-            ;;
     esac
-    shift
 done
 
-if [[ -z "$NAMESPACE" ]] || [[ -z "$CONTAINER_NAME" ]]; then
-    echo "ERROR: Both namespace and container name are required arguments." >&2
+if [[ -z "$NAMESPACE" ]]; then
+    echo "ERROR: Namespace (-n / --namespace) is a required argument." >&2
     usage
 fi
 
@@ -115,14 +110,33 @@ check_prereqs() {
         missing=1
     fi
     
-    # Detect docker or podman
-    if command -v docker >/dev/null 2>&1; then
-        CONTAINER_CLI="docker"
-    elif command -v podman >/dev/null 2>&1; then
-        CONTAINER_CLI="podman"
+    if [[ -n "${VENDOR}" ]]; then
+        if [[ "${VENDOR}" != "docker" ]] && [[ "${VENDOR}" != "podman" ]] && [[ "${VENDOR}" != "crictl" ]]; then
+            echo "ERROR: Invalid vendor '${VENDOR}'. Must be 'docker', 'podman', or 'crictl'." >&2
+            missing=1
+        elif [[ "${DRY_RUN}" == "false" ]] && ! command -v "${VENDOR}" >/dev/null 2>&1; then
+            echo "ERROR: Specified container runtime '${VENDOR}' is not installed or not in PATH." >&2
+            missing=1
+        else
+            CONTAINER_CLI="${VENDOR}"
+        fi
     else
-        echo "ERROR: Neither 'docker' nor 'podman' command line tool was found in PATH." >&2
-        missing=1
+        # Auto-detect container runtime
+        if command -v docker >/dev/null 2>&1; then
+            CONTAINER_CLI="docker"
+        elif command -v podman >/dev/null 2>&1; then
+            CONTAINER_CLI="podman"
+        elif command -v crictl >/dev/null 2>&1; then
+            CONTAINER_CLI="crictl"
+        else
+            if [[ "${DRY_RUN}" == "true" ]]; then
+                echo "WARNING: No container runtime found in PATH. Defaulting to 'docker' simulation." >&2
+                CONTAINER_CLI="docker"
+            else
+                echo "ERROR: No container runtime tool ('docker', 'podman', or 'crictl') found in PATH." >&2
+                missing=1
+            fi
+        fi
     fi
     
     if [[ $missing -eq 1 ]]; then
@@ -144,14 +158,35 @@ validate_namespace() {
 }
 
 # Image Existence Helper
-################################################################################
 image_exists() {
     local img="$1"
-    "$CONTAINER_CLI" image inspect "$img" >/dev/null 2>&1
+    if [[ "${CONTAINER_CLI}" == "crictl" ]]; then
+        sudo crictl inspecti "$img" >/dev/null 2>&1
+    else
+        "$CONTAINER_CLI" image inspect "$img" >/dev/null 2>&1
+    fi
+}
+
+# Remove Image Helper
+remove_image() {
+    local img="$1"
+    if [[ "${CONTAINER_CLI}" == "crictl" ]]; then
+        sudo crictl rmi "$img" >/dev/null 2>&1
+    else
+        "$CONTAINER_CLI" rmi "$img" >/dev/null 2>&1
+    fi
+}
+
+# Prune Images Helper
+prune_images() {
+    if [[ "${CONTAINER_CLI}" == "crictl" ]]; then
+        sudo crictl rmi --prune >/dev/null 2>&1 || true
+    else
+        "$CONTAINER_CLI" image prune -f >/dev/null 2>&1 || true
+    fi
 }
 
 # Target Tag Parsing (Extract Base Image Name)
-################################################################################
 get_target_image() {
     local source_image="$1"
     
@@ -188,13 +223,13 @@ if [[ -n "${FILTER_PATTERN:-}" ]]; then
     kubectl get pods -n "$NAMESPACE" \
         -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
         | grep "${FILTER_PATTERN}" \
-        | awk -v target="$CONTAINER_NAME" '$1 == target {print $2}' \
+        | awk -v target="$CONTAINER_NAME" 'target == "all" || $1 == target {print $2}' \
         | sort -u > "$TMP_IMAGES" || true
 else
     echo "Collecting container image without pattern filtering"
     kubectl get pods -n "$NAMESPACE" \
         -o jsonpath="{range .items[*]}{range .spec.initContainers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.containers[*]}{.name}{' '}{.image}{'\n'}{end}{range .spec.ephemeralContainers[*]}{.name}{' '}{.image}{'\n'}{end}{end}" \
-        | awk -v target="$CONTAINER_NAME" '$1 == target {print $2}' \
+        | awk -v target="$CONTAINER_NAME" 'target == "all" || $1 == target {print $2}' \
         | sort -u > "$TMP_IMAGES"
 fi
 
@@ -214,9 +249,7 @@ echo "Found ${IMAGE_COUNT} unique image(s) for container '${CONTAINER_NAME}':"
 cat "$TMP_IMAGES"
 echo
 
-################################################################################
 # Process Image Purge
-################################################################################
 SUCCESS=0
 FAILED=0
 
@@ -244,14 +277,14 @@ while read -r IMAGE; do
         continue
     fi
     
-    local image_removed=false
-    local tag_removed=false
-    local any_action=false
+    any_action=false
+    image_removed=false
+    tag_removed=false
     
     if image_exists "$IMAGE"; then
         any_action=true
         echo "Removing local image: ${IMAGE}"
-        if "$CONTAINER_CLI" rmi "$IMAGE" >/dev/null 2>&1; then
+        if remove_image "$IMAGE"; then
             echo "✔ Removed source tag successfully"
             image_removed=true
         else
@@ -262,7 +295,7 @@ while read -r IMAGE; do
     if image_exists "$TARGET_IMAGE"; then
         any_action=true
         echo "Removing local tag  : ${TARGET_IMAGE}"
-        if "$CONTAINER_CLI" rmi "$TARGET_IMAGE" >/dev/null 2>&1; then
+        if remove_image "$TARGET_IMAGE"; then
             echo "✔ Removed target tag successfully"
             tag_removed=true
         else
@@ -285,12 +318,10 @@ done < "$TMP_IMAGES"
 if ! $DRY_RUN; then
     echo
     echo "Sweeping intermediate dangling layers to reclaim additional space..."
-    "$CONTAINER_CLI" image prune -f >/dev/null 2>&1 || true
+    prune_images
 fi
 
-################################################################################
 # Summary
-################################################################################
 echo
 echo "==================== Summary ===================="
 echo "Namespace      : ${NAMESPACE}"
